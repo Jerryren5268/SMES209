@@ -1,0 +1,9 @@
+# 1. 明确标记你的源码目录为需要统计的
+source/** linguist-detectable=true
+
+# 2. 明确标记 ipcore 为第三方库，强制 GitHub 忽略它的权重统计
+ipcore/** linguist-vendored=true
+
+# 3. 确保 Verilog 文件被正确识别
+*.v linguist-language=Verilog
+*.sv linguist-language=SystemVerilog
