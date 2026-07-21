@@ -1135,9 +1135,9 @@ create_generated_clock -name {ioclk2} -source [get_ports {clk}] [get_pins {u_ddr
 create_generated_clock -name {ioclk_gate_clk} -source [get_ports {clk}] [get_pins {u_ddr_adapter.u_DDR3_50H.u_clkbufg_gate/CLKOUT}] -master_clock [get_clocks {clk}] -multiply_by {16} -divide_by {8}
 
 # HDMI@60HZ
-create_generated_clock -name {hdmi_pix_clk} -source [get_ports {clk}] [get_nets {u_pll.clkout3}] -master_clock [get_clocks {clk}] -multiply_by {27} -divide_by {10}
+create_generated_clock -name {hdmi_pix_clk} -source [get_ports {clk}] [get_nets {u_pll.clkout3}] -master_clock [get_clocks {clk}] -multiply_by {297} -divide_by {200}
 # HDMI@30HZ
-# create_generated_clock -name {hdmi_pix_clk} -source [get_ports {clk}] [get_nets {u_pll.clkout0}] -master_clock [get_clocks {clk}] -multiply_by {27} -divide_by {20} 
+# create_generated_clock -name {hdmi_pix_clk} -source [get_ports {clk}] [get_nets {u_pll.clkout0}] -master_clock [get_clocks {clk}] -multiply_by {297} -divide_by {400}
 
 create_generated_clock -name {hdmi_cfg_clk} -source [get_ports {clk}] [get_nets {u_pll.clkout1}] -master_clock [get_clocks {clk}] -multiply_by {1} -divide_by {5}
 create_generated_clock -name {cmos_25m_clk} -source [get_ports {clk}] [get_nets {u_pll.clkout2}] -master_clock [get_clocks {clk}] -multiply_by {1} -divide_by {2}

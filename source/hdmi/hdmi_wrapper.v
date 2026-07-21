@@ -46,8 +46,11 @@ module hdmi_wrapper #(
    input      [2:0]  cmos_wr_addr_head , // Gray-coded write frame index from img_ddr_writer
    // post_image_process read trigger
    output            postp_rd_valid    , // hs_start pulse for post_image_process row read
+   output            postp_frame_start , // frame boundary for atomic mask-bank switch
    // post image process connection
    input            postp_rd_ready,
+   input      [2:0] postp_rd_frame_id,
+   input            postp_rd_frame_valid,
    input     [31:0] postp_rt0_32pix,
    input     [31:0] postp_rt1_32pix,
    input     [31:0] postp_rt2_32pix,
@@ -229,8 +232,8 @@ module hdmi_wrapper #(
             rd_req       <= 1'b0;
             rd_addr_row  <= 10'b0;
         end
-    `ifndef SIMULATION
-        else if (rd_read_empty) begin
+`ifndef SIMULATION
+        else if (rd_read_empty && ~postp_rd_frame_valid) begin
             rd_req       <= 1'b0;
             rd_addr_row  <= 10'b0;
         end
@@ -243,6 +246,8 @@ module hdmi_wrapper #(
         end
         else if (hs_start) begin
             rd_req    <= 1'b1;
+            if ((src_y == 11'd0) && postp_rd_frame_valid)
+                rd_addr_tail <= postp_rd_frame_id;
     `ifdef DDR_RD_IMG_BY_POSITION_ENABLE
             rd_addr_row <= src_y[9:0];
     `endif
@@ -255,8 +260,10 @@ module hdmi_wrapper #(
     `ifndef DDR_RD_IMG_BY_POSITION_ENABLE
             rd_addr_row <= rd_addr_row_end ? 10'b0 : (rd_addr_row + 10'b1);
     `endif
-            rd_addr_tail <= ((~rd_addr_row_end) | rd_read_last)
-                                ? rd_addr_tail : (rd_addr_tail + 3'b1);
+            rd_addr_tail <= postp_rd_frame_valid
+                                ? rd_addr_tail
+                                : (((~rd_addr_row_end) | rd_read_last)
+                                    ? rd_addr_tail : (rd_addr_tail + 3'b1));
         end
     end
 
@@ -264,6 +271,7 @@ module hdmi_wrapper #(
 
     // post_image_process read trigger
     assign postp_rd_valid = hs_start;
+    assign postp_frame_start = vs_start;
 
     // =================================================================
     // Post-Image-Process (unchanged)
@@ -281,29 +289,54 @@ module hdmi_wrapper #(
     localparam [10:0] SRC_Y_LAST = SRC_IMG_HEIGHT - 11'd1;
     localparam [10:0] BB_LINE_THICKNESS = 11'd4;
     localparam [5:0]  BB_HOLD_FRAMES = 6'd10;
-    localparam [9:0]  BB_IMMEDIATE_UPDATE_DELTA = 10'd4;
+    localparam [9:0]  BB_DEADBAND = 10'd1;
+    localparam [9:0]  BB_MAX_STEP = 10'd4;
 
     reg [39:0] postp_bb0_meta;
     reg [39:0] postp_bb0_sync;
     reg [39:0] postp_bb0_hdmi;
     reg [39:0] postp_bb0_draw;
-    reg [39:0] postp_bb0_pending;
     reg [39:0] postp_bb1_meta;
     reg [39:0] postp_bb1_sync;
     reg [39:0] postp_bb1_hdmi;
     reg [39:0] postp_bb1_draw;
-    reg [39:0] postp_bb1_pending;
     reg [39:0] postp_bb2_meta;
     reg [39:0] postp_bb2_sync;
     reg [39:0] postp_bb2_hdmi;
     reg [39:0] postp_bb2_draw;
-    reg [39:0] postp_bb2_pending;
 
-    function [9:0] abs_diff_10;
-        input [9:0] a;
-        input [9:0] b;
+    function [9:0] approach_coord;
+        input [9:0] current;
+        input [9:0] target;
+        reg [9:0] delta;
+        reg [9:0] step;
         begin
-            abs_diff_10 = (a >= b) ? (a - b) : (b - a);
+            delta = (current >= target) ? (current - target)
+                                        : (target - current);
+            step = delta >> 2;
+            if (step == 10'd0)
+                step = 10'd1;
+            else if (step > BB_MAX_STEP)
+                step = BB_MAX_STEP;
+            if (delta <= BB_DEADBAND)
+                approach_coord = current;
+            else if (current < target)
+                approach_coord = current + step;
+            else
+                approach_coord = current - step;
+        end
+    endfunction
+
+    function [39:0] smooth_box;
+        input [39:0] current;
+        input [39:0] target;
+        begin
+            smooth_box = {
+                approach_coord(current[39:30], target[39:30]),
+                approach_coord(current[29:20], target[29:20]),
+                approach_coord(current[19:10], target[19:10]),
+                approach_coord(current[9:0],   target[9:0])
+            };
         end
     endfunction
 
@@ -320,28 +353,9 @@ module hdmi_wrapper #(
     wire postp_bb2_draw_valid = (postp_bb2_draw[29:20] > postp_bb2_draw[39:30])
                               && (postp_bb2_draw[ 9: 0] > postp_bb2_draw[19:10]);
 
-    wire postp_bb0_close_to_draw =
-        (abs_diff_10(postp_bb0_hdmi[39:30], postp_bb0_draw[39:30]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb0_hdmi[29:20], postp_bb0_draw[29:20]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb0_hdmi[19:10], postp_bb0_draw[19:10]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb0_hdmi[ 9: 0], postp_bb0_draw[ 9: 0]) <= BB_IMMEDIATE_UPDATE_DELTA);
-    wire postp_bb1_close_to_draw =
-        (abs_diff_10(postp_bb1_hdmi[39:30], postp_bb1_draw[39:30]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb1_hdmi[29:20], postp_bb1_draw[29:20]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb1_hdmi[19:10], postp_bb1_draw[19:10]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb1_hdmi[ 9: 0], postp_bb1_draw[ 9: 0]) <= BB_IMMEDIATE_UPDATE_DELTA);
-    wire postp_bb2_close_to_draw =
-        (abs_diff_10(postp_bb2_hdmi[39:30], postp_bb2_draw[39:30]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb2_hdmi[29:20], postp_bb2_draw[29:20]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb2_hdmi[19:10], postp_bb2_draw[19:10]) <= BB_IMMEDIATE_UPDATE_DELTA)
-     && (abs_diff_10(postp_bb2_hdmi[ 9: 0], postp_bb2_draw[ 9: 0]) <= BB_IMMEDIATE_UPDATE_DELTA);
-
     reg [5:0] bb0_hold_cnt;
     reg [5:0] bb1_hold_cnt;
     reg [5:0] bb2_hold_cnt;
-    reg [1:0] bb0_pending_cnt;
-    reg [1:0] bb1_pending_cnt;
-    reg [1:0] bb2_pending_cnt;
 
     always @(posedge pix_clk) begin
         if (~rstn) begin
@@ -349,23 +363,17 @@ module hdmi_wrapper #(
             postp_bb0_sync <= 40'd0;
             postp_bb0_hdmi <= 40'd0;
             postp_bb0_draw <= 40'd0;
-            postp_bb0_pending <= 40'd0;
             postp_bb1_meta <= 40'd0;
             postp_bb1_sync <= 40'd0;
             postp_bb1_hdmi <= 40'd0;
             postp_bb1_draw <= 40'd0;
-            postp_bb1_pending <= 40'd0;
             postp_bb2_meta <= 40'd0;
             postp_bb2_sync <= 40'd0;
             postp_bb2_hdmi <= 40'd0;
             postp_bb2_draw <= 40'd0;
-            postp_bb2_pending <= 40'd0;
             bb0_hold_cnt <= 6'd0;
             bb1_hold_cnt <= 6'd0;
             bb2_hold_cnt <= 6'd0;
-            bb0_pending_cnt <= 2'd0;
-            bb1_pending_cnt <= 2'd0;
-            bb2_pending_cnt <= 2'd0;
         end
         else begin
             postp_bb0_meta <= postp_bb0_xxyy;
@@ -385,90 +393,42 @@ module hdmi_wrapper #(
 
             if (vs_start) begin
                 if (postp_bb0_candidate_valid) begin
-                    if (!postp_bb0_draw_valid || postp_bb0_close_to_draw) begin
-                        postp_bb0_draw <= postp_bb0_hdmi;
-                        postp_bb0_pending <= postp_bb0_hdmi;
-                        bb0_pending_cnt <= 2'd0;
-                        bb0_hold_cnt <= BB_HOLD_FRAMES;
-                    end
-                    else if (postp_bb0_pending == postp_bb0_hdmi) begin
-                        if (bb0_pending_cnt != 2'd0) begin
-                            postp_bb0_draw <= postp_bb0_hdmi;
-                            bb0_pending_cnt <= 2'd0;
-                            bb0_hold_cnt <= BB_HOLD_FRAMES;
-                        end
-                        else begin
-                            bb0_pending_cnt <= 2'd1;
-                        end
-                    end
-                    else begin
-                        postp_bb0_pending <= postp_bb0_hdmi;
-                        bb0_pending_cnt <= 2'd0;
-                    end
+                    postp_bb0_draw <= postp_bb0_draw_valid
+                                        ? smooth_box(postp_bb0_draw, postp_bb0_hdmi)
+                                        : postp_bb0_hdmi;
+                    bb0_hold_cnt <= BB_HOLD_FRAMES;
                 end
                 else if (bb0_hold_cnt != 6'd0) begin
                     bb0_hold_cnt <= bb0_hold_cnt - 6'd1;
                 end
                 else begin
-                    postp_bb0_draw <= postp_bb0_draw;
+                    postp_bb0_draw <= 40'd0;
                 end
 
                 if (postp_bb1_candidate_valid) begin
-                    if (!postp_bb1_draw_valid || postp_bb1_close_to_draw) begin
-                        postp_bb1_draw <= postp_bb1_hdmi;
-                        postp_bb1_pending <= postp_bb1_hdmi;
-                        bb1_pending_cnt <= 2'd0;
-                        bb1_hold_cnt <= BB_HOLD_FRAMES;
-                    end
-                    else if (postp_bb1_pending == postp_bb1_hdmi) begin
-                        if (bb1_pending_cnt != 2'd0) begin
-                            postp_bb1_draw <= postp_bb1_hdmi;
-                            bb1_pending_cnt <= 2'd0;
-                            bb1_hold_cnt <= BB_HOLD_FRAMES;
-                        end
-                        else begin
-                            bb1_pending_cnt <= 2'd1;
-                        end
-                    end
-                    else begin
-                        postp_bb1_pending <= postp_bb1_hdmi;
-                        bb1_pending_cnt <= 2'd0;
-                    end
+                    postp_bb1_draw <= postp_bb1_draw_valid
+                                        ? smooth_box(postp_bb1_draw, postp_bb1_hdmi)
+                                        : postp_bb1_hdmi;
+                    bb1_hold_cnt <= BB_HOLD_FRAMES;
                 end
                 else if (bb1_hold_cnt != 6'd0) begin
                     bb1_hold_cnt <= bb1_hold_cnt - 6'd1;
                 end
                 else begin
-                    postp_bb1_draw <= postp_bb1_draw;
+                    postp_bb1_draw <= 40'd0;
                 end
 
                 if (postp_bb2_candidate_valid) begin
-                    if (!postp_bb2_draw_valid || postp_bb2_close_to_draw) begin
-                        postp_bb2_draw <= postp_bb2_hdmi;
-                        postp_bb2_pending <= postp_bb2_hdmi;
-                        bb2_pending_cnt <= 2'd0;
-                        bb2_hold_cnt <= BB_HOLD_FRAMES;
-                    end
-                    else if (postp_bb2_pending == postp_bb2_hdmi) begin
-                        if (bb2_pending_cnt != 2'd0) begin
-                            postp_bb2_draw <= postp_bb2_hdmi;
-                            bb2_pending_cnt <= 2'd0;
-                            bb2_hold_cnt <= BB_HOLD_FRAMES;
-                        end
-                        else begin
-                            bb2_pending_cnt <= 2'd1;
-                        end
-                    end
-                    else begin
-                        postp_bb2_pending <= postp_bb2_hdmi;
-                        bb2_pending_cnt <= 2'd0;
-                    end
+                    postp_bb2_draw <= postp_bb2_draw_valid
+                                        ? smooth_box(postp_bb2_draw, postp_bb2_hdmi)
+                                        : postp_bb2_hdmi;
+                    bb2_hold_cnt <= BB_HOLD_FRAMES;
                 end
                 else if (bb2_hold_cnt != 6'd0) begin
                     bb2_hold_cnt <= bb2_hold_cnt - 6'd1;
                 end
                 else begin
-                    postp_bb2_draw <= postp_bb2_draw;
+                    postp_bb2_draw <= 40'd0;
                 end
             end
         end

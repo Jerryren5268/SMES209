@@ -397,11 +397,14 @@ img_ddr_writer #(
 wire [9:0]  postp_i_rd_row;
 wire [9:0]  postp_i_rd_col;
 wire        postp_i_rd_valid;
+wire        hdmi_postp_frame_start;
 wire        postp_o_rd_ready;
 wire [1:0]  postp_i_rt_mode;
 wire [31:0] postp_o_rt0_32pix;
 wire [31:0] postp_o_rt1_32pix;
 wire [31:0] postp_o_rt2_32pix;
+wire [2:0]  postp_o_rd_frame_id;
+wire        postp_o_rd_frame_valid;
 wire [39:0] postp_o_bb0_xxyy;
 wire [39:0] postp_o_bb1_xxyy;
 wire [39:0] postp_o_bb2_xxyy;
@@ -421,7 +424,11 @@ u_post_image_process (
     .i_rd_row       (postp_i_rd_row     ),
     .i_rd_col       (postp_i_rd_col     ),
     .i_rd_valid     (postp_i_rd_valid   ),
+    .i_rd_frame_start(hdmi_postp_frame_start),
+    .i_wr_frame_head_gray(cam_wr_addr_head),
     .o_rd_ready     (postp_o_rd_ready   ),
+    .o_rd_frame_id  (postp_o_rd_frame_id),
+    .o_rd_frame_valid(postp_o_rd_frame_valid),
     .i_rt_mode      (postp_i_rt_mode    ),
     .o_rt0_32pix    (postp_o_rt0_32pix  ),
     .o_rt1_32pix    (postp_o_rt1_32pix  ),
@@ -482,7 +489,10 @@ u_hdmi_wrapper (
     .cmos_wr_addr_head(cam_wr_addr_head  ),
     // post_image_process
     .postp_rd_valid  (hdmi_postp_rd_valid),
+    .postp_frame_start(hdmi_postp_frame_start),
     .postp_rd_ready  (postp_o_rd_ready   ),
+    .postp_rd_frame_id(postp_o_rd_frame_id),
+    .postp_rd_frame_valid(postp_o_rd_frame_valid),
     .postp_rt0_32pix (postp_o_rt0_32pix  ),
     .postp_rt1_32pix (postp_o_rt1_32pix  ),
     .postp_rt2_32pix (postp_o_rt2_32pix  ),

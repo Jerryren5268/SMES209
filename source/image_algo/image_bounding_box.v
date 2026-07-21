@@ -1,6 +1,6 @@
 // Bounding box detector for a binary target stream.
 // Tracks per-frame min/max coordinates inside ROI and latches the result at
-// the next frame start. If a frame has no target, the previous output is held.
+// the next frame start. If a frame has no target, a zero/invalid box is output.
 
 module image_bounding_box #(
     parameter IW = 640,
@@ -108,6 +108,12 @@ always @(posedge pclk or negedge rst_n) begin
             o_Xmax <= cur_x_max;
             o_Ymin <= cur_y_min;
             o_Ymax <= cur_y_max;
+        end
+        else begin
+            o_Xmin <= 10'd0;
+            o_Xmax <= 10'd0;
+            o_Ymin <= 10'd0;
+            o_Ymax <= 10'd0;
         end
 
         match_found <= 1'b0;
